@@ -1,116 +1,7 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CheckerX Game</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <!-- Socket.io Client Library -->
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-    <style>
-        body {
-            background-color: #1a1a2e;
-            color: #ffffff;
-            font-family: Arial, sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            margin: 0;
-            user-select: none;
-        }
-        h2 { color: #e94560; margin-bottom: 5px; }
-        #status { font-size: 16px; margin-bottom: 5px; color: #4ecca3; font-weight: bold; text-align: center; }
-        #online-count { font-size: 14px; margin-bottom: 15px; color: #ffcc00; }
-        .board {
-            width: 320px;
-            height: 320px;
-            display: grid;
-            grid-template-columns: repeat(8, 1fr);
-            grid-template-rows: repeat(8, 1fr);
-            border: 4px solid #0f3460;
-            box-shadow: 0px 4px 15px rgba(0,0,0,0.5);
-            border-radius: 4px;
-            overflow: hidden;
-        }
-        .cell {
-            width: 40px;
-            height: 40px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .cell.white { background-color: #e0e0e0; }
-        .cell.black { background-color: #16213e; }
-        .cell.selected { background-color: #4ecca3 !important; }
-        
-        .piece {
-            width: 30px;
-            height: 30px;
-            border-radius: 50%;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: bold;
-        }
-        .piece.red {
-            background: radial-gradient(circle at 30% 30%, #ff6b6b, #c0392b);
-            box-shadow: 0 3px 5px rgba(0,0,0,0.5);
-        }
-        .piece.white-piece {
-            background: radial-gradient(circle at 30% 30%, #ffffff, #bdc3c7);
-            color: #000;
-            box-shadow: 0 3px 5px rgba(0,0,0,0.5);
-        }
-        .king::after {
-            content: "👑";
-            font-size: 14px;
-        }
-        /* Game Over Popup Modal */
-        #game-over-modal {
-            display: none;
-            position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.85);
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            z-index: 100;
-        }
-        #game-over-modal h1 { color: #4ecca3; font-size: 28px; margin-bottom: 10px; }
-        #game-over-modal button {
-            background-color: #e94560;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            font-size: 16px;
-            font-weight: bold;
-            border-radius: 5px;
-            cursor: pointer;
-            margin-top: 15px;
-        }
-    </style>
-</head>
-<body>
-
-    <h2>⚔️ CheckerX Arena ⚔️</h2>
-    <div id="status">Connecting to server...</div>
-    <div id="online-count">Online Players: 0</div>
-    <div class="board" id="board"></div>
-
-    <!-- Game Over Popup -->
-    <div id="game-over-modal">
-        <h1 id="winner-text">🏆 Player 1 Wins!</h1>
-        <button onclick="restartGame()">Play Again</button>
-    </div>
-
-    <script>
+<script>
         window.Telegram.WebApp.ready();
         window.Telegram.WebApp.expand();
 
-        // Render Live Backend Socket.io Connection
         const SOCKET_URL = "https://checkerx-backend.onrender.com";
         const socket = io(SOCKET_URL);
 
@@ -124,6 +15,7 @@
         let selectedPiece = null;
         let currentPlayer = 'red';
         let isChainCapturing = false;
+        let myColor = null; // Player color ('red' or 'white')
 
         socket.on("connect", () => {
             statusElement.innerText = "Connected! Waiting for opponent...";
@@ -137,13 +29,27 @@
             onlineCountElement.innerText = `Online Players: ${count}`;
         });
 
+        // Backend එකෙන් player-move සහ opponent-move දෙකටම listen කරනවා
         socket.on("opponent-move", (data) => {
             boardState = data.boardState;
             currentPlayer = data.currentPlayer;
             isChainCapturing = data.isChainCapturing;
-            statusElement.innerText = `${currentPlayer === 'red' ? "Red's Turn (Player 1)" : "White's Turn (Player 2)"}`;
+            updateStatusText();
             renderBoard();
         });
+
+        socket.on("player-move", (data) => {
+            boardState = data.boardState;
+            currentPlayer = data.currentPlayer;
+            isChainCapturing = data.isChainCapturing;
+            updateStatusText();
+            renderBoard();
+        });
+
+        function updateStatusText() {
+            const turnText = currentPlayer === 'red' ? "Red's Turn (Player 1)" : "White's Turn (Player 2)";
+            statusElement.innerText = turnText;
+        }
 
         function initBoard() {
             modalElement.style.display = 'none';
@@ -151,7 +57,7 @@
             currentPlayer = 'red';
             isChainCapturing = false;
             selectedPiece = null;
-            statusElement.innerText = "Red's Turn (Player 1)";
+            updateStatusText();
 
             for (let row = 0; row < 8; row++) {
                 for (let col = 0; col < 8; col++) {
@@ -369,14 +275,18 @@
                 return;
             }
 
-            statusElement.innerText = `${currentPlayer === 'red' ? "Red's Turn (Player 1)" : "White's Turn (Player 2)"}`;
+            updateStatusText();
             renderBoard();
 
-            socket.emit('player-move', {
+            // සර්වර් එකට Event එක යවනවා
+            const payload = {
                 boardState: boardState,
                 currentPlayer: currentPlayer,
                 isChainCapturing: isChainCapturing
-            });
+            };
+
+            socket.emit('player-move', payload);
+            socket.emit('makeMove', payload); // Backend event name එක මොකක් වුණත් වැඩ කරන්න දෙකම යවනවා
         }
 
         function restartGame() {
@@ -385,5 +295,3 @@
 
         initBoard();
     </script>
-</body>
-</html>
