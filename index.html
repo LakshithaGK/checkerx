@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CheckerX Game</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <!-- Socket.io Client Library -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        body {
+            background-color: #1a1a2e;
+            color: #ffffff;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            user-select: none;
+        }
+        h2 { color: #e94560; margin-bottom: 5px; }
+        #status { font-size: 16px; margin-bottom: 5px; color: #4ecca3; font-weight: bold; text-align: center; }
+        #online-count { font-size: 14px; margin-bottom: 15px; color: #ffcc00; }
+        .board {
+            width: 320px;
+            height: 320px;
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            grid-template-rows: repeat(8, 1fr);
+            border: 4px solid #0f3460;
+            box-shadow: 0px 4px 15px rgba(0,0,0,0.5);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .cell {
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .cell.white { background-color: #e0e0e0; }
+        .cell.black { background-color: #16213e; }
+        .cell.selected { background-color: #4ecca3 !important; }
+        
+        .piece {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+        }
+        .piece.red {
+            background: radial-gradient(circle at 30% 30%, #ff6b6b, #c0392b);
+            box-shadow: 0 3px 5px rgba(0,0,0,0.5);
+        }
+        .piece.white-piece {
+            background: radial-gradient(circle at 30% 30%, #ffffff, #bdc3c7);
+            color: #000;
+            box-shadow: 0 3px 5px rgba(0,0,0,0.5);
+        }
+        .king::after {
+            content: "👑";
+            font-size: 14px;
+        }
+        /* Game Over Popup Modal */
+        #game-over-modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85);
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+        }
+        #game-over-modal h1 { color: #4ecca3; font-size: 28px; margin-bottom: 10px; }
+        #game-over-modal button {
+            background-color: #e94560;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>⚔️ CheckerX Arena ⚔️</h2>
+    <div id="status">Connecting to server...</div>
+    <div id="online-count">Online Players: 0</div>
+    <div class="board" id="board"></div>
+
+    <!-- Game Over Popup -->
+    <div id="game-over-modal">
+        <h1 id="winner-text">🏆 Player 1 Wins!</h1>
+        <button onclick="restartGame()">Play Again</button>
+    </div>
+
+    <script>
+        window.Telegram.WebApp.ready();
+        window.Telegram.WebApp.expand();
+
+        // Render Live Backend Socket.io Connection
+        const SOCKET_URL = "https://checkerx-backend.onrender.com";
+        const socket = io(SOCKET_URL);
+
+        const boardElement = document.getElementById('board');
+        const statusElement = document.getElementById('status');
+        const onlineCountElement = document.getElementById('online-count');
+        const modalElement = document.getElementById('game-over-modal');
+        const winnerTextElement = document.getElementById('winner-text');
+
+        let boardState = Array(8).fill(null).map(() => Array(8).fill(null));
+        let selectedPiece = null;
+        let currentPlayer = 'red';
+        let isChainCapturing = false;
+
+        socket.on("connect", () => {
+            statusElement.innerText = "Connected! Waiting for opponent...";
+        });
+
+        socket.on("disconnect", () => {
+            statusElement.innerText = "Disconnected from server.";
+        });
+
+        socket.on("online-players", (count) => {
+            onlineCountElement.innerText = `Online Players: ${count}`;
+        });
+
+        socket.on("opponent-move", (data) => {
+            boardState = data.boardState;
+            currentPlayer = data.currentPlayer;
+            isChainCapturing = data.isChainCapturing;
+            statusElement.innerText = `${currentPlayer === 'red' ? "Red's Turn (Player 1)" : "White's Turn (Player 2)"}`;
+            renderBoard();
+        });
+
+        function initBoard() {
+            modalElement.style.display = 'none';
+            boardState = Array(8).fill(null).map(() => Array(8).fill(null));
+            currentPlayer = 'red';
+            isChainCapturing = false;
+            selectedPiece = null;
+            statusElement.innerText = "Red's Turn (Player 1)";
+
+            for (let row = 0; row < 8; row++) {
+                for (let col = 0; col < 8; col++) {
+                    const isBlack = (row + col) % 2 === 1;
+                    if (isBlack) {
+                        if (row < 3) boardState[row][col] = { type: 'red', isKing: false };
+                        else if (row > 4) boardState[row][col] = { type: 'white', isKing: false };
+                        else boardState[row][col] = null;
+                    } else {
+                        boardState[row][col] = null;
+                    }
+                }
+            }
+            renderBoard();
+        }
+
+        function renderBoard() {
+            boardElement.innerHTML = '';
+            for (let row = 0; row < 8; row++) {
+                for (let col = 0; col < 8; col++) {
+                    const cell = document.createElement('div');
+                    const isBlack = (row + col) % 2 === 1;
+                    cell.className = `cell ${isBlack ? 'black' : 'white'}`;
+
+                    if (selectedPiece && selectedPiece.row === row && selectedPiece.col === col) {
+                        cell.classList.add('selected');
+                    }
+
+                    const pieceData = boardState[row][col];
+                    if (pieceData) {
+                        const piece = document.createElement('div');
+                        piece.className = `piece ${pieceData.type === 'red' ? 'red' : 'white-piece'} ${pieceData.isKing ? 'king' : ''}`;
+                        cell.appendChild(piece);
+                    }
+
+                    cell.addEventListener('click', () => handleCellClick(row, col));
+                    boardElement.appendChild(cell);
+                }
+            }
+        }
+
+        function playerHasCaptures(player) {
+            for (let r = 0; r < 8; r++) {
+                for (let c = 0; c < 8; c++) {
+                    if (boardState[r][c] && boardState[r][c].type === player) {
+                        if (getValidCapturesForPiece(r, c).length > 0) return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        function getValidCapturesForPiece(r, c) {
+            const piece = boardState[r][c];
+            if (!piece) return [];
+            const captures = [];
+            const directions = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
+
+            if (piece.isKing) {
+                for (let [dr, dc] of directions) {
+                    let step = 1;
+                    while (r + dr * step >= 0 && r + dr * step < 8 && c + dc * step >= 0 && c + dc * step < 8) {
+                        const midR = r + dr * step;
+                        const midC = c + dc * step;
+                        const targetPiece = boardState[midR][midC];
+
+                        if (targetPiece) {
+                            if (targetPiece.type === piece.type) break;
+                            const landR = midR + dr;
+                            const landC = midC + dc;
+                            if (landR >= 0 && landR < 8 && landC >= 0 && landC < 8 && boardState[landR][landC] === null) {
+                                captures.push({ landR, landC, capR: midR, capC: midC });
+                            }
+                            break; 
+                        }
+                        step++;
+                    }
+                }
+            } else {
+                for (let [dr, dc] of directions) {
+                    const midR = r + dr;
+                    const midC = c + dc;
+                    const landR = r + dr * 2;
+                    const landC = c + dc * 2;
+
+                    if (landR >= 0 && landR < 8 && landC >= 0 && landC < 8) {
+                        const midPiece = boardState[midR][midC];
+                        if (midPiece && midPiece.type !== piece.type && boardState[landR][landC] === null) {
+                            captures.push({ landR, landC, capR: midR, capC: midC });
+                        }
+                    }
+                }
+            }
+            return captures;
+        }
+
+        function hasAnyValidMoves(player) {
+            if (playerHasCaptures(player)) return true;
+            for (let r = 0; r < 8; r++) {
+                for (let c = 0; c < 8; c++) {
+                    const p = boardState[r][c];
+                    if (p && p.type === player) {
+                        if (p.isKing) {
+                            const dirs = [[1,1],[1,-1],[-1,1],[-1,-1]];
+                            for (let [dr, dc] of dirs) {
+                                const nr = r + dr, nc = c + dc;
+                                if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8 && boardState[nr][nc] === null) return true;
+                            }
+                        } else {
+                            const forward = player === 'red' ? 1 : -1;
+                            const dirs = [[forward, 1], [forward, -1]];
+                            for (let [dr, dc] of dirs) {
+                                const nr = r + dr, nc = c + dc;
+                                if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8 && boardState[nr][nc] === null) return true;
+                            }
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        function handleCellClick(row, col) {
+            const clicked = boardState[row][col];
+
+            if (isChainCapturing) {
+                if (selectedPiece && selectedPiece.row === row && selectedPiece.col === col) return;
+            } else if (clicked && clicked.type === currentPlayer) {
+                selectedPiece = { row, col };
+                renderBoard();
+                return;
+            }
+
+            if (!selectedPiece || (row + col) % 2 !== 1 || clicked !== null) return;
+
+            const mustCapture = playerHasCaptures(currentPlayer);
+            const validCaptures = getValidCapturesForPiece(selectedPiece.row, selectedPiece.col);
+
+            if (mustCapture) {
+                const moveCap = validCaptures.find(c => c.landR === row && c.landC === col);
+                if (moveCap) {
+                    executeCapture(selectedPiece.row, selectedPiece.col, moveCap);
+                }
+                return;
+            }
+
+            const p = boardState[selectedPiece.row][selectedPiece.col];
+            if (p.isKing) {
+                if (isClearDiagonal(selectedPiece.row, selectedPiece.col, row, col)) {
+                    executeMove(selectedPiece.row, selectedPiece.col, row, col);
+                }
+            } else {
+                const rowDiff = row - selectedPiece.row;
+                const colDiff = Math.abs(col - selectedPiece.col);
+                const isValidDir = (currentPlayer === 'red' && rowDiff === 1) || (currentPlayer === 'white' && rowDiff === -1);
+                if (isValidDir && Math.abs(rowDiff) === 1 && colDiff === 1) {
+                    executeMove(selectedPiece.row, selectedPiece.col, row, col);
+                }
+            }
+        }
+
+        function executeCapture(fromR, fromC, capData) {
+            const p = boardState[fromR][fromC];
+            boardState[capData.capR][capData.capC] = null;
+            boardState[capData.landR][capData.landC] = p;
+            boardState[fromR][fromC] = null;
+
+            if ((currentPlayer === 'red' && capData.landR === 7) || (currentPlayer === 'white' && capData.landR === 0)) {
+                p.isKing = true;
+            }
+
+            const nextCaptures = getValidCapturesForPiece(capData.landR, capData.landC);
+            if (nextCaptures.length > 0) {
+                isChainCapturing = true;
+                selectedPiece = { row: capData.landR, col: capData.landC };
+                renderBoard();
+            } else {
+                isChainCapturing = false;
+                finishTurn();
+            }
+        }
+
+        function isClearDiagonal(fromR, fromC, toR, toC) {
+            if (Math.abs(toR - fromR) !== Math.abs(toC - fromC)) return false;
+            const stepR = Math.sign(toR - fromR);
+            const stepC = Math.sign(toC - fromC);
+            let r = fromR + stepR;
+            let c = fromC + stepC;
+            while (r !== toR && c !== toC) {
+                if (boardState[r][c] !== null) return false;
+                r += stepR;
+                c += stepC;
+            }
+            return true;
+        }
+
+        function executeMove(fromR, fromC, toR, toC) {
+            const p = boardState[fromR][fromC];
+            if ((currentPlayer === 'red' && toR === 7) || (currentPlayer === 'white' && toR === 0)) {
+                p.isKing = true;
+            }
+            boardState[toR][toC] = p;
+            boardState[fromR][fromC] = null;
+            finishTurn();
+        }
+
+        function finishTurn() {
+            selectedPiece = null;
+            currentPlayer = currentPlayer === 'red' ? 'white' : 'red';
+            
+            if (!hasAnyValidMoves(currentPlayer)) {
+                const winner = currentPlayer === 'red' ? "White (Player 2)" : "Red (Player 1)";
+                winnerTextElement.innerText = `🏆 ${winner} Wins!`;
+                modalElement.style.display = 'flex';
+                return;
+            }
+
+            statusElement.innerText = `${currentPlayer === 'red' ? "Red's Turn (Player 1)" : "White's Turn (Player 2)"}`;
+            renderBoard();
+
+            socket.emit('player-move', {
+                boardState: boardState,
+                currentPlayer: currentPlayer,
+                isChainCapturing: isChainCapturing
+            });
+        }
+
+        function restartGame() {
+            initBoard();
+        }
+
+        initBoard();
+    </script>
+</body>
+</html>
