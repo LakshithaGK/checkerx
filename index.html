@@ -1,15 +1,93 @@
-<script>
-        window.Telegram.WebApp.ready();
-        window.Telegram.WebApp.expand();
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CheckerX Mini App</title>
+    <!-- Telegram SDK -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <!-- Socket.io Client Library -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            background-color: #1e1e1e;
+            color: #ffffff;
+            margin: 0;
+            padding: 10px;
+        }
+        #status {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #0088cc;
+        }
+        #board {
+            width: 320px;
+            height: 320px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            grid-template-rows: repeat(8, 1fr);
+            border: 4px solid #333;
+        }
+        .cell {
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .white { background-color: #eee; }
+        .black { background-color: #444; }
+        .cell.selected { background-color: #ffeb3b !important; }
+        
+        .piece {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            box-sizing: border-box;
+        }
+        .red { background-color: #e74c3c; border: 2px solid #b22222; }
+        .white-piece { background-color: #ffffff; border: 2px solid #ccc; }
+        .king::after { content: '👑'; font-size: 14px; display: block; text-align: center; }
+
+        #game-over-modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8);
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>CheckerX</h2>
+    <div id="status">Connecting to server...</div>
+    <div id="board"></div>
+
+    <div id="game-over-modal">
+        <h1 id="winner-text">Game Over</h1>
+        <button onclick="initBoard()">Play Again</button>
+    </div>
+
+    <script>
+        // Telegram WebApp Safety Check
+        if (window.Telegram && window.Telegram.WebApp) {
+            window.Telegram.WebApp.ready();
+            window.Telegram.WebApp.expand();
+        }
 
         const SOCKET_URL = "https://checkerx-backend.onrender.com";
         const socket = io(SOCKET_URL);
 
         const boardElement = document.getElementById('board');
         const statusElement = document.getElementById('status');
-        const onlineCountElement = document.getElementById('online-count');
         const modalElement = document.getElementById('game-over-modal');
-        const winnerTextElement = document.getElementById('winner-text');
 
         let boardState = Array(8).fill(null).map(() => Array(8).fill(null));
         let selectedPiece = null;
@@ -20,22 +98,20 @@
         let currentRoomId = null;
 
         socket.on("connect", () => {
-            statusElement.innerText = "Connecting... Finding an opponent...";
+            statusElement.innerText = "Finding an opponent...";
         });
 
         socket.on("waiting", (msg) => {
             statusElement.innerText = msg;
         });
 
-        // Server එකෙන් Room එකයි Color එකයි හම්බුණාම
         socket.on("gameStart", (data) => {
             myColor = data.color;
             currentRoomId = data.roomId;
             initBoard();
-            statusElement.innerText = `Game Started! You are ${myColor.toUpperCase()}. ${currentPlayer === myColor ? "Your Turn!" : "Opponent's Turn"}`;
+            updateTurnStatus();
         });
 
-        // Opponent ගේ Move එක ආවාම Board එක Update කිරීම
         socket.on("moveMade", (data) => {
             boardState = data.boardState;
             currentPlayer = data.currentPlayer;
@@ -46,9 +122,8 @@
 
         function updateTurnStatus() {
             if (myColor) {
-                statusElement.innerText = currentPlayer === myColor ? "Your Turn!" : "Opponent's Turn...";
-            } else {
-                statusElement.innerText = `${currentPlayer === 'red' ? "Red" : "White"}'s Turn`;
+                const isMyTurn = currentPlayer === myColor;
+                statusElement.innerText = `You are ${myColor.toUpperCase()} | ${isMyTurn ? "YOUR TURN!" : "Opponent's Turn..."}`;
             }
         }
 
@@ -100,7 +175,6 @@
         }
 
         function handleCellClick(row, col) {
-            // තමන්ගේ turn එක නැත්නම් ඉත්තන් අදින්න දෙන්නේ නැහැ
             if (myColor && currentPlayer !== myColor) return;
 
             const clicked = boardState[row][col];
@@ -248,7 +322,6 @@
             updateTurnStatus();
             renderBoard();
 
-            // Server එකේ makeMove Event එකට යවනවා
             socket.emit('makeMove', {
                 roomId: currentRoomId,
                 boardState: boardState,
@@ -257,3 +330,5 @@
             });
         }
     </script>
+</body>
+</html>
