@@ -15,40 +15,41 @@
         let selectedPiece = null;
         let currentPlayer = 'red';
         let isChainCapturing = false;
-        let myColor = null; // Player color ('red' or 'white')
+        
+        let myColor = null; 
+        let currentRoomId = null;
 
         socket.on("connect", () => {
-            statusElement.innerText = "Connected! Waiting for opponent...";
+            statusElement.innerText = "Connecting... Finding an opponent...";
         });
 
-        socket.on("disconnect", () => {
-            statusElement.innerText = "Disconnected from server.";
+        socket.on("waiting", (msg) => {
+            statusElement.innerText = msg;
         });
 
-        socket.on("online-players", (count) => {
-            onlineCountElement.innerText = `Online Players: ${count}`;
+        // Server එකෙන් Room එකයි Color එකයි හම්බුණාම
+        socket.on("gameStart", (data) => {
+            myColor = data.color;
+            currentRoomId = data.roomId;
+            initBoard();
+            statusElement.innerText = `Game Started! You are ${myColor.toUpperCase()}. ${currentPlayer === myColor ? "Your Turn!" : "Opponent's Turn"}`;
         });
 
-        // Backend එකෙන් player-move සහ opponent-move දෙකටම listen කරනවා
-        socket.on("opponent-move", (data) => {
+        // Opponent ගේ Move එක ආවාම Board එක Update කිරීම
+        socket.on("moveMade", (data) => {
             boardState = data.boardState;
             currentPlayer = data.currentPlayer;
             isChainCapturing = data.isChainCapturing;
-            updateStatusText();
+            updateTurnStatus();
             renderBoard();
         });
 
-        socket.on("player-move", (data) => {
-            boardState = data.boardState;
-            currentPlayer = data.currentPlayer;
-            isChainCapturing = data.isChainCapturing;
-            updateStatusText();
-            renderBoard();
-        });
-
-        function updateStatusText() {
-            const turnText = currentPlayer === 'red' ? "Red's Turn (Player 1)" : "White's Turn (Player 2)";
-            statusElement.innerText = turnText;
+        function updateTurnStatus() {
+            if (myColor) {
+                statusElement.innerText = currentPlayer === myColor ? "Your Turn!" : "Opponent's Turn...";
+            } else {
+                statusElement.innerText = `${currentPlayer === 'red' ? "Red" : "White"}'s Turn`;
+            }
         }
 
         function initBoard() {
@@ -57,7 +58,6 @@
             currentPlayer = 'red';
             isChainCapturing = false;
             selectedPiece = null;
-            updateStatusText();
 
             for (let row = 0; row < 8; row++) {
                 for (let col = 0; col < 8; col++) {
@@ -95,6 +95,48 @@
 
                     cell.addEventListener('click', () => handleCellClick(row, col));
                     boardElement.appendChild(cell);
+                }
+            }
+        }
+
+        function handleCellClick(row, col) {
+            // තමන්ගේ turn එක නැත්නම් ඉත්තන් අදින්න දෙන්නේ නැහැ
+            if (myColor && currentPlayer !== myColor) return;
+
+            const clicked = boardState[row][col];
+
+            if (isChainCapturing) {
+                if (selectedPiece && selectedPiece.row === row && selectedPiece.col === col) return;
+            } else if (clicked && clicked.type === currentPlayer) {
+                selectedPiece = { row, col };
+                renderBoard();
+                return;
+            }
+
+            if (!selectedPiece || (row + col) % 2 !== 1 || clicked !== null) return;
+
+            const mustCapture = playerHasCaptures(currentPlayer);
+            const validCaptures = getValidCapturesForPiece(selectedPiece.row, selectedPiece.col);
+
+            if (mustCapture) {
+                const moveCap = validCaptures.find(c => c.landR === row && c.landC === col);
+                if (moveCap) {
+                    executeCapture(selectedPiece.row, selectedPiece.col, moveCap);
+                }
+                return;
+            }
+
+            const p = boardState[selectedPiece.row][selectedPiece.col];
+            if (p.isKing) {
+                if (isClearDiagonal(selectedPiece.row, selectedPiece.col, row, col)) {
+                    executeMove(selectedPiece.row, selectedPiece.col, row, col);
+                }
+            } else {
+                const rowDiff = row - selectedPiece.row;
+                const colDiff = Math.abs(col - selectedPiece.col);
+                const isValidDir = (currentPlayer === 'red' && rowDiff === 1) || (currentPlayer === 'white' && rowDiff === -1);
+                if (isValidDir && Math.abs(rowDiff) === 1 && colDiff === 1) {
+                    executeMove(selectedPiece.row, selectedPiece.col, row, col);
                 }
             }
         }
@@ -154,71 +196,6 @@
             return captures;
         }
 
-        function hasAnyValidMoves(player) {
-            if (playerHasCaptures(player)) return true;
-            for (let r = 0; r < 8; r++) {
-                for (let c = 0; c < 8; c++) {
-                    const p = boardState[r][c];
-                    if (p && p.type === player) {
-                        if (p.isKing) {
-                            const dirs = [[1,1],[1,-1],[-1,1],[-1,-1]];
-                            for (let [dr, dc] of dirs) {
-                                const nr = r + dr, nc = c + dc;
-                                if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8 && boardState[nr][nc] === null) return true;
-                            }
-                        } else {
-                            const forward = player === 'red' ? 1 : -1;
-                            const dirs = [[forward, 1], [forward, -1]];
-                            for (let [dr, dc] of dirs) {
-                                const nr = r + dr, nc = c + dc;
-                                if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8 && boardState[nr][nc] === null) return true;
-                            }
-                        }
-                    }
-                }
-            }
-            return false;
-        }
-
-        function handleCellClick(row, col) {
-            const clicked = boardState[row][col];
-
-            if (isChainCapturing) {
-                if (selectedPiece && selectedPiece.row === row && selectedPiece.col === col) return;
-            } else if (clicked && clicked.type === currentPlayer) {
-                selectedPiece = { row, col };
-                renderBoard();
-                return;
-            }
-
-            if (!selectedPiece || (row + col) % 2 !== 1 || clicked !== null) return;
-
-            const mustCapture = playerHasCaptures(currentPlayer);
-            const validCaptures = getValidCapturesForPiece(selectedPiece.row, selectedPiece.col);
-
-            if (mustCapture) {
-                const moveCap = validCaptures.find(c => c.landR === row && c.landC === col);
-                if (moveCap) {
-                    executeCapture(selectedPiece.row, selectedPiece.col, moveCap);
-                }
-                return;
-            }
-
-            const p = boardState[selectedPiece.row][selectedPiece.col];
-            if (p.isKing) {
-                if (isClearDiagonal(selectedPiece.row, selectedPiece.col, row, col)) {
-                    executeMove(selectedPiece.row, selectedPiece.col, row, col);
-                }
-            } else {
-                const rowDiff = row - selectedPiece.row;
-                const colDiff = Math.abs(col - selectedPiece.col);
-                const isValidDir = (currentPlayer === 'red' && rowDiff === 1) || (currentPlayer === 'white' && rowDiff === -1);
-                if (isValidDir && Math.abs(rowDiff) === 1 && colDiff === 1) {
-                    executeMove(selectedPiece.row, selectedPiece.col, row, col);
-                }
-            }
-        }
-
         function executeCapture(fromR, fromC, capData) {
             const p = boardState[fromR][fromC];
             boardState[capData.capR][capData.capC] = null;
@@ -267,31 +244,16 @@
         function finishTurn() {
             selectedPiece = null;
             currentPlayer = currentPlayer === 'red' ? 'white' : 'red';
-            
-            if (!hasAnyValidMoves(currentPlayer)) {
-                const winner = currentPlayer === 'red' ? "White (Player 2)" : "Red (Player 1)";
-                winnerTextElement.innerText = `🏆 ${winner} Wins!`;
-                modalElement.style.display = 'flex';
-                return;
-            }
 
-            updateStatusText();
+            updateTurnStatus();
             renderBoard();
 
-            // සර්වර් එකට Event එක යවනවා
-            const payload = {
+            // Server එකේ makeMove Event එකට යවනවා
+            socket.emit('makeMove', {
+                roomId: currentRoomId,
                 boardState: boardState,
                 currentPlayer: currentPlayer,
                 isChainCapturing: isChainCapturing
-            };
-
-            socket.emit('player-move', payload);
-            socket.emit('makeMove', payload); // Backend event name එක මොකක් වුණත් වැඩ කරන්න දෙකම යවනවා
+            });
         }
-
-        function restartGame() {
-            initBoard();
-        }
-
-        initBoard();
     </script>
